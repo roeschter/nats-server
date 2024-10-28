@@ -1568,5 +1568,25 @@
     "help": "",
     "url": "",
     "deprecates": ""
+  },
+  {
+    "constant": "JSStreamExpectedLastSequencePerSubjectNotReady",
+    "code": 503,
+    "error_code": 10159,
+    "description": "expected last sequence per subject temporarily unavailable",
+    "comment": "",
+    "help": "",
+    "url": "",
+    "deprecates": ""
+  },
+  {
+    "constant": "JSStreamExpectedLastSequencePerSubjectConflict",
+    "code": 409,
+    "error_code": 10160,
+    "description": "subject for expected last sequence is in process",
+    "comment": "",
+    "help": "",
+    "url": "",
+    "deprecates": ""
   }
 ]

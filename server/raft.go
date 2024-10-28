@@ -72,6 +72,7 @@ type RaftNode interface {
 	ResumeApply()
 	LeadChangeC() <-chan bool
 	QuitC() <-chan struct{}
+	AppliedFloorC() <-chan struct{}
 	Created() time.Time
 	Stop()
 	Delete()
@@ -163,6 +164,9 @@ type raft struct {
 	pindex  uint64 // Previous index from the last snapshot
 	commit  uint64 // Index of the most recent commit
 	applied uint64 // Index of the most recently applied commit
+
+	appliedFloor  uint64        // Index when to signal initial messages have been applied after becoming leader. 0 means signaling is disabled.
+	appliedFloorC chan struct{} // Channel used to signal leader has applied initial set of stored messages.
 
 	leader string // The ID of the leader
 	vote   string // Our current vote state
@@ -367,31 +371,32 @@ func (s *Server) initRaftNode(accName string, cfg *RaftConfig, labels pprofLabel
 
 	qpfx := fmt.Sprintf("[ACC:%s] RAFT '%s' ", accName, cfg.Name)
 	n := &raft{
-		created:  time.Now(),
-		id:       hash[:idLen],
-		group:    cfg.Name,
-		sd:       cfg.Store,
-		wal:      cfg.Log,
-		wtype:    cfg.Log.Type(),
-		track:    cfg.Track,
-		csz:      ps.clusterSize,
-		qn:       ps.clusterSize/2 + 1,
-		peers:    make(map[string]*lps),
-		acks:     make(map[uint64]map[string]struct{}),
-		pae:      make(map[uint64]*appendEntry),
-		s:        s,
-		js:       s.getJetStream(),
-		quit:     make(chan struct{}),
-		reqs:     newIPQueue[*voteRequest](s, qpfx+"vreq"),
-		votes:    newIPQueue[*voteResponse](s, qpfx+"vresp"),
-		prop:     newIPQueue[*Entry](s, qpfx+"entry"),
-		entry:    newIPQueue[*appendEntry](s, qpfx+"appendEntry"),
-		resp:     newIPQueue[*appendEntryResponse](s, qpfx+"appendEntryResponse"),
-		apply:    newIPQueue[*CommittedEntry](s, qpfx+"committedEntry"),
-		accName:  accName,
-		leadc:    make(chan bool, 32),
-		observer: cfg.Observer,
-		extSt:    ps.domainExt,
+		created:       time.Now(),
+		id:            hash[:idLen],
+		group:         cfg.Name,
+		sd:            cfg.Store,
+		wal:           cfg.Log,
+		wtype:         cfg.Log.Type(),
+		track:         cfg.Track,
+		csz:           ps.clusterSize,
+		qn:            ps.clusterSize/2 + 1,
+		peers:         make(map[string]*lps),
+		acks:          make(map[uint64]map[string]struct{}),
+		pae:           make(map[uint64]*appendEntry),
+		s:             s,
+		js:            s.getJetStream(),
+		quit:          make(chan struct{}),
+		appliedFloorC: make(chan struct{}),
+		reqs:          newIPQueue[*voteRequest](s, qpfx+"vreq"),
+		votes:         newIPQueue[*voteResponse](s, qpfx+"vresp"),
+		prop:          newIPQueue[*Entry](s, qpfx+"entry"),
+		entry:         newIPQueue[*appendEntry](s, qpfx+"appendEntry"),
+		resp:          newIPQueue[*appendEntryResponse](s, qpfx+"appendEntryResponse"),
+		apply:         newIPQueue[*CommittedEntry](s, qpfx+"committedEntry"),
+		accName:       accName,
+		leadc:         make(chan bool, 32),
+		observer:      cfg.Observer,
+		extSt:         ps.domainExt,
 	}
 
 	// Setup our internal subscriptions for proposals, votes and append entries.
@@ -1057,6 +1062,12 @@ func (n *raft) Applied(index uint64) (entries uint64, bytes uint64) {
 		n.applied = index
 	}
 
+	// If it was set, and we reached the minimum applied index, reset and send signal to channel.
+	if n.appliedFloor > 0 && index >= n.appliedFloor {
+		n.appliedFloor = 0
+		n.signalAppliedFloor()
+	}
+
 	// Calculate the number of entries and estimate the byte size that
 	// we can now remove with a compaction/snapshot.
 	var state StreamState
@@ -1713,6 +1724,10 @@ func (n *raft) LeadChangeC() <-chan bool { return n.leadc }
 
 // QuitC returns the quit channel, notifying when the Raft group has shut down.
 func (n *raft) QuitC() <-chan struct{} { return n.quit }
+
+// AppliedFloorC returns a channel to notify that all messages that were not yet
+// applied when becoming leader, have been applied since.
+func (n *raft) AppliedFloorC() <-chan struct{} { return n.appliedFloorC }
 
 func (n *raft) Created() time.Time {
 	n.RLock()
@@ -4266,9 +4281,22 @@ func (n *raft) switchToLeader() {
 	n.lxfer = false
 	n.updateLeader(n.id)
 	n.switchState(Leader)
+
+	// Wait for messages to be applied if we've stored more, otherwise signal immediately.
+	if n.pindex > n.applied {
+		n.appliedFloor = n.pindex
+	} else {
+		n.signalAppliedFloor()
+	}
 	n.Unlock()
 
 	if sendHB {
 		n.sendHeartbeat()
 	}
+}
+
+// Will signal that all messages that were not yet applied when becoming leader, have been applied since.
+func (n *raft) signalAppliedFloor() {
+	// Signal in go routine, otherwise we would block.
+	go func() { n.appliedFloorC <- struct{}{} }()
 }
