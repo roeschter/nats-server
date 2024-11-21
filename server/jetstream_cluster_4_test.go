@@ -4185,7 +4185,7 @@ func TestJetStreamClusterDontInstallSnapshotWhenStoppingStream(t *testing.T) {
 	validateStreamState(snap)
 
 	// Simulate a message being stored, but not calling Applied yet.
-	err = mset.processJetStreamMsg("foo", _EMPTY_, nil, nil, 1, time.Now().UnixNano(), nil)
+	err = mset.processJetStreamMsg("foo", _EMPTY_, nil, nil, 1, time.Now().UnixNano())
 	require_NoError(t, err)
 
 	// Simulate the stream being stopped before we're able to call Applied.
