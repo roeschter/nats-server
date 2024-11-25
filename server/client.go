@@ -4286,6 +4286,9 @@ var (
 // processServiceImport is an internal callback when a subscription matches an imported service
 // from another account. This includes response mappings as well.
 func (c *client) processServiceImport(si *serviceImport, acc *Account, msg []byte) {
+
+	fmt.Println("--------------------------------processServiceImport--------------------------------")
+
 	// If we are a GW and this is not a direct serviceImport ignore.
 	isResponse := si.isRespServiceImport()
 	if (c.kind == GATEWAY || c.kind == ROUTER) && !isResponse {
@@ -4501,7 +4504,13 @@ func (c *client) processServiceImport(si *serviceImport, acc *Account, msg []byt
 	// Determine if we should remove this service import. This is for response service imports.
 	// We will remove if we did not deliver, or if we are a response service import and we are
 	// a singleton, or we have an EOF message.
-	shouldRemove := !didDeliver || (isResponse && (si.rt == Singleton || len(msg) == LEN_CR_LF))
+	shouldRemove := !didDeliver || (isResponse && (si.rt == Singleton || len(msg) == LEN_CR_LF) && !strings.HasPrefix(string(c.pa.reply), "$JS.ACK"))
+
+	fmt.Println("Len msg", len(msg))
+	fmt.Println("Is Jetstream ", strings.HasPrefix(string(c.pa.reply), "$JS.ACK"))
+	fmt.Println("Should remove", shouldRemove)
+	fmt.Println("is tracking", si.tracking)
+
 	// If we are tracking and we did not actually send the latency info we need to suppress the removal.
 	if si.tracking && !didSendTL {
 		shouldRemove = false
