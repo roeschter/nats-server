@@ -1430,6 +1430,133 @@ func TestJetStreamLeafNodeJSClusterMigrateRecoveryWithDelay(t *testing.T) {
 // This will test that when a mirror or source construct is setup across a leafnode/domain
 // that it will recover quickly once the LN is re-established regardless
 // of backoff state of the internal consumer create.
+func TestJetStreamLeafNodeAndMirrorResyncAfterConnectionDownWithDelayedRestart(t *testing.T) {
+	tmplA := `
+		listen: 4223
+		server_name: tcm
+		jetstream {
+			store_dir: '%s',
+			domain: TCM
+		}
+		accounts {
+			JS { users = [ { user: "y", pass: "p" } ]; jetstream: true }
+			$SYS { users = [ { user: "admin", pass: "s3cr3t!" } ] }
+		}
+		leaf { port: 5223 }
+    `
+	confA := createConfFile(t, []byte(fmt.Sprintf(tmplA, t.TempDir())))
+	sA, oA := RunServerWithConfig(confA)
+	defer sA.Shutdown()
+
+	// Create a proxy - we will use this to simulate a network down event.
+	rtt, bw := 10*time.Microsecond, 10*1024*1024*1024
+	proxy := newNetProxy(rtt, bw, bw, fmt.Sprintf("nats://y:p@127.0.0.1:%d", oA.LeafNode.Port))
+	defer proxy.stop()
+
+	tmplB := `
+		listen: 4222
+		server_name: xmm
+		jetstream {
+			store_dir: '%s',
+			domain: XMM
+		}
+		accounts {
+			JS { users = [ { user: "y", pass: "p" } ]; jetstream: true }
+			$SYS { users = [ { user: "admin", pass: "s3cr3t!" } ] }
+		}
+		leaf { remotes [ { url: %s, account: "JS" } ], reconnect: "0.25s" }
+    `
+
+	confB := createConfFile(t, []byte(fmt.Sprintf(tmplB, t.TempDir(), proxy.leafURL())))
+	sB, oB := RunServerWithConfig(confB)
+
+	fmt.Println("Port: ", oB.Port)
+
+	defer sA.Shutdown()
+
+	// Make sure we are connected ok.
+	checkLeafNodeConnectedCount(t, sA, 1)
+	checkLeafNodeConnectedCount(t, sB, 1)
+
+	// We will have 3 streams that we will test for proper syncing after
+	// the network is restored.
+	//
+	//  1. Mirror A --> B
+	//  2. Mirror A <-- B
+	//  3. Source A <-> B
+
+	// Connect to sA.
+	ncA, jsA := jsClientConnect(t, sA, nats.UserInfo("y", "p"))
+	defer ncA.Close()
+
+	// Connect to sB.
+	ncB, jsB := jsClientConnect(t, sB, nats.UserInfo("y", "p"))
+	defer ncB.Close()
+
+	// Add in TEST-A
+	_, err := jsA.AddStream(&nats.StreamConfig{Name: "SRC-A", Subjects: []string{"A.*"}})
+	require_NoError(t, err)
+
+	_, err = jsB.AddStream(&nats.StreamConfig{
+		Name:     "SRC-B",
+		Subjects: []string{"B.*"},
+		Sources: []*nats.StreamSource{{
+			Name:          "SRC-A",
+			FilterSubject: "A.*",
+			External:      &nats.ExternalStream{APIPrefix: "$JS.TCM.API"},
+		}},
+	})
+	require_NoError(t, err)
+
+	//Allow SRC-B to connect
+	fmt.Println("Waiting")
+	time.Sleep(1 * time.Second)
+
+	sInfo, err := jsB.StreamInfo("SRC-B")
+	lastSeen := sInfo.Sources[0].Active.Milliseconds()
+	fmt.Println("Last seen after initial connect: ", sInfo.Sources[0].Name, " ", sInfo.Sources[0].Active)
+	if lastSeen < 0 || lastSeen > 1100 {
+		t.Fatalf("Source not yet synced - not active within theb last 1000m")
+	}
+
+	//Shut Down the hub
+	sA.Shutdown()
+	time.Sleep(1 * time.Second)
+
+	//Check that leaf connection is gone
+	checkLeafNodeConnectedCount(t, sB, 0)
+
+	sInfo, err = jsB.StreamInfo("SRC-B")
+	lastSeen = sInfo.Sources[0].Active.Milliseconds()
+	fmt.Println("Last seen after disconnect: ", sInfo.Sources[0].Name, " ", sInfo.Sources[0].Active)
+
+	if lastSeen < 1000 {
+		t.Fatalf("Can still see the origin stream - should be incative for more than 1000ms by now")
+	}
+
+	//Now wait a moment to restart server A
+	//If we wait more than about 10s - the auto reconnect source will fail
+	//Works for 5s delay
+	time.Sleep(10 * time.Second)
+	sA, oA = RunServerWithConfig(confA)
+
+	time.Sleep(1 * time.Second)
+	//Check that leaf connection up again
+	checkLeafNodeConnectedCount(t, sB, 1)
+
+	sInfo, err = jsB.StreamInfo("SRC-B")
+	lastSeen = sInfo.Sources[0].Active.Milliseconds()
+	fmt.Println("Last seen after leaf node reconnect: ", sInfo.Sources[0].Name, " ", sInfo.Sources[0].Active)
+
+	if lastSeen > 1000 {
+		t.Fatalf("Source did not reconnect")
+	}
+
+}
+
+// This will test that when a mirror or source construct is setup across a leafnode/domain
+// that it will recover quickly once the LN is re-established regardless
+// of backoff state of the internal consumer create.
 func TestJetStreamLeafNodeAndMirrorResyncAfterConnectionDown(t *testing.T) {
 	tmplA := `
 		listen: -1
@@ -1649,6 +1776,19 @@ func TestJetStreamLeafNodeAndMirrorResyncAfterConnectionDown(t *testing.T) {
 	cancelAndDelayConsumer(sB, "SRC-B")
 
 	// Now restart the network proxy.
+	//time.Sleep(15 * time.Second)
+
+	//sInfo, err := jsB.StreamInfo("SRC-B")
+	//fmt.Println(sInfo.Sources[0].Active)
+
+	//time.Sleep(10 * time.Second)
+
+	checkLeafNodeConnectedCount(t, sA, 0)
+	checkLeafNodeConnectedCount(t, sB, 0)
+
+	sInfo, err := jsB.StreamInfo("SRC-B")
+	fmt.Println("After restart", sInfo.Sources[0].Active)
+
 	proxy.start()
 
 	// Make sure we are connected ok.

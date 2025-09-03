@@ -2606,9 +2606,10 @@ func (mset *stream) mirrorInfo() *StreamSourceInfo {
 // retryDisconnectedSyncConsumers() will check if we have any disconnected
 // sync consumers for either mirror or a source and will reset and retry to connect.
 func (mset *stream) retryDisconnectedSyncConsumers(remoteDomain string) {
+	fmt.Println("retryDisconnectedSyncConsumers - locking")
 	mset.mu.Lock()
 	defer mset.mu.Unlock()
-
+	fmt.Println("retryDisconnectedSyncConsumers - locked")
 	// Only applicable if we are the stream leader.
 	if !mset.isLeader() {
 		return
@@ -3325,10 +3326,12 @@ const sourceConsumerRetryThreshold = 2 * time.Second
 // and throttle the number of requests.
 // Lock should be held.
 func (mset *stream) setupSourceConsumer(iname string, seq uint64, startTime time.Time) {
+	fmt.Println("setupSourceConsumer  - enter")
 	if mset.sourceSetupSchedules == nil {
 		mset.sourceSetupSchedules = map[string]*time.Timer{}
 	}
 
+	fmt.Println("setupSourceConsumer - has sources")
 	if _, ok := mset.sourceSetupSchedules[iname]; ok {
 		// If there is already a timer scheduled, we don't need to do anything.
 		return
@@ -3336,9 +3339,11 @@ func (mset *stream) setupSourceConsumer(iname string, seq uint64, startTime time
 
 	si := mset.sources[iname]
 	if si == nil || si.sip { // if sourceInfo was removed or setup is in progress, nothing to do
+		fmt.Println("setupSourceConsumer - nothing to do")
 		return
 	}
 
+	fmt.Println("setupSourceConsumer - try to schedule")
 	// First calculate the delay until the next time we can
 	var scheduleDelay time.Duration
 
@@ -3358,12 +3363,14 @@ func (mset *stream) setupSourceConsumer(iname string, seq uint64, startTime time
 
 	// Schedule the call to trySetupSourceConsumer
 	mset.sourceSetupSchedules[iname] = time.AfterFunc(scheduleDelay, func() {
+		fmt.Println("setupSourceConsumer - lock")
 		mset.mu.Lock()
 		defer mset.mu.Unlock()
-
+		fmt.Println("setupSourceConsumer - locked")
 		delete(mset.sourceSetupSchedules, iname)
 		mset.trySetupSourceConsumer(iname, seq, startTime)
 	})
+	fmt.Println("setupSourceConsumer - exit")
 }
 
 // This is where we will actually try to create a new consumer for the source
