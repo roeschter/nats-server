@@ -4024,6 +4024,7 @@ func buildInternalNkeyUser(uc *jwt.UserClaims, acts map[string]struct{}, acc *Ac
 }
 
 func fetchAccount(res AccountResolver, name string) (string, error) {
+	//s.Warnf("accounts.go fetchAccount()")
 	if !nkeys.IsValidPublicAccountKey(name) {
 		return _EMPTY_, fmt.Errorf("will only fetch valid account keys")
 	}
@@ -4527,6 +4528,7 @@ func (dr *DirAccResolver) Start(s *Server) error {
 }
 
 func (dr *DirAccResolver) Fetch(name string) (string, error) {
+	//s.Warnf("accounts.go DirAccResolver fetch:")
 	if theJWT, err := dr.LoadAcc(name); theJWT != _EMPTY_ {
 		return theJWT, nil
 	} else {
@@ -4593,6 +4595,7 @@ type CacheDirAccResolver struct {
 }
 
 func (s *Server) fetch(res AccountResolver, name string, timeout time.Duration) (string, error) {
+	s.Warnf("accounts.go fetch:")
 	if s == nil {
 		return _EMPTY_, ErrNoAccountResolver
 	}
@@ -4606,6 +4609,7 @@ func (s *Server) fetch(res AccountResolver, name string, timeout time.Duration) 
 	// Resolver will wait for detected active servers to reply
 	// before serving an error in case there weren't any found.
 	expectedServers := len(s.sys.servers)
+	s.Warnf("accounts.go fetch: ", "expectedServers:=", expectedServers)
 	replySubj := s.newRespInbox()
 	replies := s.sys.replies
 
@@ -4622,11 +4626,16 @@ func (s *Server) fetch(res AccountResolver, name string, timeout time.Duration) 
 		expectedServers--
 		// Skip empty responses until getting all the available servers.
 		if isEmpty && expectedServers > 0 {
+			s.Warnf("accounts.go fetch: ", "expectedServers:=", expectedServers)
+			s.Warnf("accounts.go fetch: ", "isEmpty && expectedServers > 0")
+
 			return
 		}
 		// Use the first valid response if there is still interest or
 		// one of the empty responses to signal that it was not found.
 		if _, ok := replies[replySubj]; ok {
+			s.Warnf("accounts.go fetch: ", "expectedServers:=", expectedServers)
+			s.Warnf("accounts.go fetch: ", "isEmpty:=", isEmpty)
 			select {
 			case respC <- clone:
 			default:

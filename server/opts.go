@@ -5882,6 +5882,7 @@ func getDefaultAuthTimeout(tls *tls.Config, tlsTimeout float64) float64 {
 // based on the selected flags and/or configuration file.
 // The command line options take precedence to the ones in the configuration file.
 func ConfigureOptions(fs *flag.FlagSet, args []string, printVersion, printHelp, printTLSHelp func()) (*Options, error) {
+
 	opts := &Options{}
 	var (
 		showVersion            bool

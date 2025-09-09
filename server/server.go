@@ -2130,6 +2130,7 @@ func (s *Server) fetchRawAccountClaims(name string) (string, error) {
 	}
 	// Need to do actual Fetch
 	start := time.Now()
+	s.Warnf("server.go fetchAccount()")
 	claimJWT, err := fetchAccount(accResolver, name)
 	fetchTime := time.Since(start)
 	if fetchTime > time.Second {
@@ -2138,6 +2139,7 @@ func (s *Server) fetchRawAccountClaims(name string) (string, error) {
 		s.Debugf("Account [%s] fetch took %v", name, fetchTime)
 	}
 	if err != nil {
+		s.Warnf("server.go fetchAccount()")
 		s.Warnf("Account fetch failed: %v", err)
 		return "", err
 	}
